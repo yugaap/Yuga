@@ -12,7 +12,8 @@ import DashboardPage from './pages/dashboard/DashboardPage';
 import StudentExamsPage from './pages/siswa/ExamsPage';
 import TakeExamPage from './pages/siswa/TakeExamPage';
 import AdminUsersPage from './pages/admin/UsersPage';
-import GuruQuestionsPage from './pages/guru/QuestionsPage';
+import ExamsManagementPage from './pages/shared/ExamsManagementPage';
+import QuestionsManagementPage from './pages/shared/QuestionsManagementPage';
 
 // Placeholders for routes
 const Placeholder = ({ title }: { title: string }) => (
@@ -34,13 +35,13 @@ export default function App() {
             <Route index element={<DashboardPage />} />
             {/* Admin Routes */}
             <Route path="admin/users" element={<AdminUsersPage />} />
-            <Route path="admin/questions" element={<Placeholder title="Manajemen Soal" />} />
-            <Route path="admin/exams" element={<Placeholder title="Manajemen Ujian" />} />
+            <Route path="admin/questions" element={<QuestionsManagementPage />} />
+            <Route path="admin/exams" element={<ExamsManagementPage />} />
             <Route path="admin/results" element={<Placeholder title="Rekap Hasil Ujian" />} />
             
             {/* Guru Routes */}
-            <Route path="guru/questions" element={<GuruQuestionsPage />} />
-            <Route path="guru/exams" element={<Placeholder title="Buat Ujian" />} />
+            <Route path="guru/questions" element={<QuestionsManagementPage />} />
+            <Route path="guru/exams" element={<ExamsManagementPage />} />
             <Route path="guru/results" element={<Placeholder title="Hasil Ujian Siswa" />} />
             
             {/* Siswa Routes */}

@@ -142,6 +142,25 @@ CREATE POLICY "Users can insert own results" ON public.results FOR INSERT WITH C
   auth.uid() = user_id
 );
 
+-- 9. Trigger to automatically create a profile in public.users when a new user signs up
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS trigger AS $$
+BEGIN
+  INSERT INTO public.users (id, name, role)
+  VALUES (
+    new.id, 
+    COALESCE(new.raw_user_meta_data->>'name', split_part(new.email, '@', 1)), 
+    'siswa'
+  );
+  RETURN new;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
+
 
 -- Function to automatically assign first user as admin (optional, can be done manually)
 -- To make the first user an admin, run this query after signing up the first time:
