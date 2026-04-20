@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
-import { Plus, Trash2, Edit, FileSignature, CheckCircle2, XCircle } from 'lucide-react';
+import { Plus, Trash2, FileSignature, CheckCircle2, XCircle, Search } from 'lucide-react';
 
 interface Exam {
   id: string;
@@ -11,13 +11,26 @@ interface Exam {
   created_at: string;
 }
 
+interface Question {
+  id: string;
+  question: string;
+}
+
 export default function ExamsManagementPage() {
   const { user } = useAuth();
   const [exams, setExams] = useState<Exam[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showModal, setShowModal] = useState(false);
+  
+  // Modals state
+  const [showCreateModal, setShowCreateModal] = useState(false);
   const [newExam, setNewExam] = useState({ title: '', duration: 60 });
   const [submitting, setSubmitting] = useState(false);
+
+  const [managingExam, setManagingExam] = useState<Exam | null>(null);
+  const [allQuestions, setAllQuestions] = useState<Question[]>([]);
+  const [selectedQuestionIds, setSelectedQuestionIds] = useState<Set<string>>(new Set());
+  const [modalLoading, setModalLoading] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     fetchExams();
@@ -34,15 +47,10 @@ export default function ExamsManagementPage() {
     }
 
     try {
-      // Admin could potentially see all exams, guru only theirs. 
-      // Based on our RLS, admin can update any, guru can update theirs.
-      // For fetch, RLS allows everyone to view exams.
       let query = supabase.from('exams').select('*').order('created_at', { ascending: false });
-      
       if (user?.role === 'guru') {
           query = query.eq('created_by', user.id);
       }
-      
       const { data, error } = await query;
       if (error) throw error;
       setExams(data || []);
@@ -57,7 +65,7 @@ export default function ExamsManagementPage() {
     e.preventDefault();
     if (!supabase) {
         alert('Mode Demo: Tidak dapat terhubung ke database. Formulir diabaikan.');
-        setShowModal(false);
+        setShowCreateModal(false);
         return;
     }
     
@@ -69,9 +77,8 @@ export default function ExamsManagementPage() {
            created_by: user?.id,
            is_active: false
         });
-        
         if (error) throw error;
-        setShowModal(false);
+        setShowCreateModal(false);
         setNewExam({ title: '', duration: 60 });
         fetchExams();
     } catch (e: any) {
@@ -86,7 +93,6 @@ export default function ExamsManagementPage() {
         setExams(exams.map(ex => ex.id === id ? { ...ex, is_active: !currentStatus } : ex));
         return;
      }
-     
      try {
         const { error } = await supabase.from('exams').update({ is_active: !currentStatus }).eq('id', id);
         if (error) throw error;
@@ -103,7 +109,6 @@ export default function ExamsManagementPage() {
         setExams(exams.filter(ex => ex.id !== id));
         return;
      }
-
      try {
         const { error } = await supabase.from('exams').delete().eq('id', id);
         if (error) throw error;
@@ -111,6 +116,63 @@ export default function ExamsManagementPage() {
      } catch (e: any) {
         console.error(e);
         alert('Gagal menghapus ujian');
+     }
+  };
+
+  // Open manage questions modal
+  const openManageQuestions = async (exam: Exam) => {
+    setManagingExam(exam);
+    setSearchTerm('');
+    if (!supabase) return;
+
+    setModalLoading(true);
+    try {
+      // Get all questions
+      const { data: questionsData } = await supabase.from('questions').select('id, question').order('created_at', { ascending: false });
+      setAllQuestions(questionsData || []);
+
+      // Get already selected questions for this exam
+      const { data: linkedQs } = await supabase.from('exam_questions').select('question_id').eq('exam_id', exam.id);
+      const linkedIds = new Set((linkedQs || []).map(q => q.question_id));
+      setSelectedQuestionIds(linkedIds);
+    } catch(e: any) {
+      console.error(e);
+    } finally {
+      setModalLoading(false);
+    }
+  };
+
+  const toggleQuestionSelection = (qId: string) => {
+    const newSelection = new Set(selectedQuestionIds);
+    if (newSelection.has(qId)) newSelection.delete(qId);
+    else newSelection.add(qId);
+    setSelectedQuestionIds(newSelection);
+  };
+
+  const saveExamQuestions = async () => {
+     if (!supabase || !managingExam) return;
+     setSubmitting(true);
+     try {
+       // Delete existing mappings
+       await supabase.from('exam_questions').delete().eq('exam_id', managingExam.id);
+       
+       // Insert new ones
+       const inserts = Array.from(selectedQuestionIds).map(qId => ({
+         exam_id: managingExam.id,
+         question_id: qId
+       }));
+
+       if (inserts.length > 0) {
+         const { error } = await supabase.from('exam_questions').insert(inserts);
+         if (error) throw error;
+       }
+
+       setManagingExam(null);
+       alert("Soal berhasil disimpan ke dalam ujian.");
+     } catch (e: any) {
+       alert("Gagal menyimpan soal ujian: " + e.message);
+     } finally {
+       setSubmitting(false);
      }
   };
 
@@ -122,7 +184,7 @@ export default function ExamsManagementPage() {
           <p className="text-gray-500 mt-1 text-[14px]">Buat ujian baru, atur durasi, dan kelola status aktif ujian.</p>
         </div>
         <button 
-           onClick={() => setShowModal(true)}
+           onClick={() => setShowCreateModal(true)}
            className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-5 py-2.5 rounded-[8px] font-semibold transition-colors shadow-sm"
         >
           <Plus size={18} />
@@ -173,8 +235,10 @@ export default function ExamsManagementPage() {
                     </td>
                     <td className="px-6 py-4 text-right">
                        <div className="flex items-center justify-end gap-2">
-                           {/* A dedicated configure questions page could be added in the future */}
-                           <button className="p-2 text-gray-400 hover:text-blue-600 bg-white hover:bg-blue-50 border border-gray-200 hover:border-blue-200 rounded-[8px] transition-colors" title="Edit Soal (Belum Tersedia)">
+                           <button 
+                              onClick={() => openManageQuestions(exam)}
+                              className="p-2 text-gray-400 hover:text-blue-600 bg-white hover:bg-blue-50 border border-gray-200 hover:border-blue-200 rounded-[8px] transition-colors" title="Kelola Soal Ujian"
+                           >
                               <FileSignature size={16} />
                            </button>
                            <button 
@@ -194,12 +258,12 @@ export default function ExamsManagementPage() {
       </div>
 
       {/* Modal Buat Ujian */}
-      {showModal && (
+      {showCreateModal && (
          <div className="fixed inset-0 bg-gray-900/50 flex flex-col justify-center items-center z-50 p-4">
             <div className="bg-white rounded-[12px] w-full max-w-[500px] shadow-lg border border-gray-200 flex flex-col">
                <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-gray-50 rounded-t-[12px]">
                   <h3 className="font-bold text-gray-900">Buat Ujian Baru</h3>
-                  <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-gray-600">
+                  <button onClick={() => setShowCreateModal(false)} className="text-gray-400 hover:text-gray-600">
                      <XCircle size={20} />
                   </button>
                </div>
@@ -229,7 +293,7 @@ export default function ExamsManagementPage() {
                   <div className="mt-4 flex gap-3">
                      <button 
                         type="button" 
-                        onClick={() => setShowModal(false)}
+                        onClick={() => setShowCreateModal(false)}
                         className="flex-1 bg-white border border-gray-300 text-gray-700 py-2.5 rounded-[8px] font-semibold hover:bg-gray-50 transition-colors"
                      >
                         Batal
@@ -246,6 +310,89 @@ export default function ExamsManagementPage() {
             </div>
          </div>
       )}
+
+      {/* Modal Kelola Soal Ujian */}
+      {managingExam && (
+        <div className="fixed inset-0 bg-gray-900/50 flex flex-col justify-center items-center z-50 p-4">
+          <div className="bg-white rounded-[12px] w-full max-w-[700px] h-[80vh] flex flex-col shadow-lg border border-gray-200">
+             <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-gray-50 rounded-t-[12px]">
+                <div>
+                   <h3 className="font-bold text-gray-900 leading-tight">Pilih Soal ({selectedQuestionIds.size} dipilih)</h3>
+                   <p className="text-gray-500 text-[13px] mt-0.5">{managingExam.title}</p>
+                </div>
+                <button onClick={() => setManagingExam(null)} className="text-gray-400 hover:text-gray-600">
+                   <XCircle size={24} />
+                </button>
+             </div>
+             
+             <div className="p-4 border-b border-gray-200">
+                <div className="relative">
+                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                   <input 
+                      type="text" 
+                      placeholder="Cari pertanyaan..." 
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="pl-10 pr-4 py-2 w-full border border-gray-300 rounded-[8px] text-[14px] focus:outline-none focus:ring-1 focus:ring-red-500 bg-white transition-colors"
+                   />
+                </div>
+             </div>
+
+             <div className="flex-1 overflow-y-auto p-4 bg-gray-50/50">
+               {modalLoading ? (
+                 <div className="text-center py-10 text-gray-500 text-sm">Memuat soal...</div>
+               ) : allQuestions.length === 0 ? (
+                 <div className="text-center py-10 text-gray-500 text-sm">Belum ada soal di Bank Soal. Tambahkan menu Bank Soal.</div>
+               ) : (
+                 <div className="space-y-3">
+                   {allQuestions
+                     .filter(q => q.question.toLowerCase().includes(searchTerm.toLowerCase()))
+                     .map(q => {
+                       const isSelected = selectedQuestionIds.has(q.id);
+                       return (
+                         <label 
+                           key={q.id} 
+                           className={`flex items-start gap-4 p-4 rounded-[8px] border cursor-pointer transition-colors ${
+                              isSelected ? 'bg-red-50/50 border-red-200' : 'bg-white border-gray-200 hover:border-gray-300'
+                           }`}
+                         >
+                            <div className="pt-0.5 flex-shrink-0">
+                               <input 
+                                  type="checkbox" 
+                                  checked={isSelected}
+                                  onChange={() => toggleQuestionSelection(q.id)}
+                                  className="w-4 h-4 text-red-600 rounded focus:ring-red-500 cursor-pointer"
+                               />
+                            </div>
+                            <div className={`text-[14px] flex-1 ${isSelected ? 'text-gray-900 font-medium' : 'text-gray-700'}`}>
+                               {q.question}
+                            </div>
+                         </label>
+                       );
+                     })}
+                 </div>
+               )}
+             </div>
+
+             <div className="px-6 py-4 border-t border-gray-200 bg-white rounded-b-[12px] flex justify-end gap-3">
+                <button 
+                  onClick={() => setManagingExam(null)}
+                  className="px-5 py-2.5 bg-white border border-gray-300 text-gray-700 rounded-[8px] font-semibold hover:bg-gray-50 transition-colors text-[14px]"
+                >
+                  Batal
+                </button>
+                <button 
+                  onClick={saveExamQuestions}
+                  disabled={submitting}
+                  className="px-5 py-2.5 bg-red-600 text-white rounded-[8px] font-semibold hover:bg-red-700 transition-colors disabled:opacity-50 text-[14px]"
+                >
+                  {submitting ? 'Menyimpan...' : 'Simpan Tugas Ujian'}
+                </button>
+             </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
